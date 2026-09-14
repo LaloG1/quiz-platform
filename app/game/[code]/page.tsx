@@ -27,20 +27,16 @@ export default function HostGamePage() {
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
   const [fullRanking, setFullRanking] = useState<RankedPlayer[]>([]);
 
-  // Usamos useRef para manejar el canal de forma segura ante re-renderizados de Next.js
   const channelRef = useRef<RealtimeChannel | null>(null);
 
   useEffect(() => {
-    // 1. Limpieza preventiva por si el HMR o Strict Mode deja un canal colgado
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
     }
 
-    // 2. Crear una instancia nueva del canal
     const channel = supabase.channel(`game:${code}`);
     channelRef.current = channel;
 
-    // 3. Cargar datos del juego
     const loadData = async () => {
       const { data: game, error } = await supabase
         .from('games')
@@ -54,28 +50,21 @@ export default function HostGamePage() {
         return;
       }
 
-      const quizData = game.quizzes as any;
-
-      if (quizData?.questions) {
-        quizData.questions = [...quizData.questions].sort(
+      const quizzesWithOrderedQuestions = {
+        ...game.quizzes,
+        questions: [...(game.quizzes?.questions || [])].sort(
           (a: any, b: any) => (a.order ?? 0) - (b.order ?? 0)
-        );
-      }
+        ),
+      };
 
-      setQuiz(quizData);
+      setQuiz(quizzesWithOrderedQuestions);
       setGameState('waiting');
     };
     
     loadData();
 
-    // 4. Suscribirse al canal
-    channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        console.log('✅ Host suscrito al canal del juego:', code);
-      }
-    });
+    channel.subscribe();
 
-    // 5. Cleanup al desmontar
     return () => {
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
@@ -84,13 +73,29 @@ export default function HostGamePage() {
     };
   }, [code, router]);
 
-  // Función para enviar actualizaciones a los jugadores
-  const broadcastState = (payload: any) => {
+  // Función para enviar la pregunta COMPLETA a los jugadores
+  const broadcastQuestion = (question: any) => {
     if (channelRef.current) {
+      // Mapear al formato que espera QuestionScreen
+      const formattedQuestion = {
+        id: question.id,
+        question: question.question_text,
+        time_limit: question.time_limit,
+        is_double_points: question.is_double_points,
+        answers: question.answers.map((a: any) => ({
+          id: a.id,
+          text: a.answer_text,
+          is_correct: a.is_correct,
+        })),
+      };
+
       channelRef.current.send({ 
         type: 'broadcast', 
         event: 'game_update', 
-        payload 
+        payload: { 
+          state: 'question', 
+          question: formattedQuestion 
+        }
       });
     }
   };
@@ -100,7 +105,7 @@ export default function HostGamePage() {
     setGameState('question');
     const firstQ = quiz.questions[currentQIndex];
     setCurrentQuestion(firstQ);
-    broadcastState({ state: 'question', questionId: firstQ.id });
+    broadcastQuestion(firstQ);
   };
 
   const handleNext = async () => {
@@ -109,12 +114,18 @@ export default function HostGamePage() {
     if (currentQIndex < quiz.questions.length - 1) {
       const nextIdx = currentQIndex + 1;
       setCurrentQIndex(nextIdx);
-      setCurrentQuestion(quiz.questions[nextIdx]);
-      broadcastState({ state: 'question', questionId: quiz.questions[nextIdx].id });
+      const nextQ = quiz.questions[nextIdx];
+      setCurrentQuestion(nextQ);
+      broadcastQuestion(nextQ);
     } else {
-      // ¡ÚLTIMA PREGUNTA! Calcular y mostrar ranking
       setGameState('ranking');
-      broadcastState({ state: 'ranking' });
+      if (channelRef.current) {
+        channelRef.current.send({ 
+          type: 'broadcast', 
+          event: 'game_update', 
+          payload: { state: 'ranking' }
+        });
+      }
       
       const { data: game } = await supabase.from('games').select('id').eq('code', code).single();
       if (game) {

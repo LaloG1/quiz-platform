@@ -20,34 +20,23 @@ export default function JoinGamePage() {
   const [selectedAvatar, setSelectedAvatar] = useState(AVATARS[0]);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [gameId, setGameId] = useState<string | null>(null);
-  
+
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
 
-  // Listener de broadcast del host
+    // Listener de broadcast del host
   useEffect(() => {
     if (step === 'join-form') return;
 
     const broadcastChannel = supabase.channel(`game:${code}`);
 
     broadcastChannel
-      .on('broadcast', { event: 'game_update' }, async (payload) => {
-        const { state, questionId } = payload.payload;
+      .on('broadcast', { event: 'game_update' }, (payload) => {
+        const { state, question } = payload.payload;
 
-        if (state === 'question' && questionId) {
+        if (state === 'question' && question) {
+          // Usar los datos reales que envió el host
           setStep('question');
-          // Mock temporal - en prod hacer fetch real
-          setCurrentQuestion({
-            id: questionId,
-            question_text: '¿Cuál es la capital de México?',
-            time_limit: 15,
-            is_double_points: false,
-            answers: [
-              { id: 'a1', answer_text: 'Guadalajara', is_correct: false, order: 1 },
-              { id: 'a2', answer_text: 'Monterrey', is_correct: false, order: 2 },
-              { id: 'a3', answer_text: 'Ciudad de México', is_correct: true, order: 3 },
-              { id: 'a4', answer_text: 'Puebla', is_correct: false, order: 4 },
-            ]
-          });
+          setCurrentQuestion(question);
         } else if (state === 'ranking') {
           setStep('ranking');
         }
@@ -61,17 +50,17 @@ export default function JoinGamePage() {
 
   const handleJoin = async () => {
     if (!nickname.trim()) return;
-    
+
     // 1. Buscar el juego por código
     const { data: game } = await supabase
       .from('games')
       .select('id')
       .eq('code', code)
       .single();
-      
-    if (!game) { 
-      alert('Juego no encontrado. Verifica el código.'); 
-      return; 
+
+    if (!game) {
+      alert('Juego no encontrado. Verifica el código.');
+      return;
     }
 
     setGameId(game.id);
@@ -88,12 +77,12 @@ export default function JoinGamePage() {
       .select()
       .single();
 
-    if (error) { 
-      console.error(error); 
+    if (error) {
+      console.error(error);
       alert('Error al unirse: ' + error.message);
-      return; 
+      return;
     }
-    
+
     // 3. Guardar el ID del jugador y pasar a la sala de espera
     setPlayerId(player.id);
     setStep('waiting');
@@ -103,8 +92,8 @@ export default function JoinGamePage() {
     if (!playerId || !currentQuestion || !gameId) return;
 
     const isCorrect = currentQuestion.answers.find((a: any) => a.id === answerId)?.is_correct;
-    const pointsEarned = isCorrect 
-      ? calculatePoints(currentQuestion.time_limit, timeMs, currentQuestion.is_double_points) 
+    const pointsEarned = isCorrect
+      ? calculatePoints(currentQuestion.time_limit, timeMs, currentQuestion.is_double_points)
       : 0;
 
     await supabase.from('game_answers').insert({
@@ -137,7 +126,7 @@ export default function JoinGamePage() {
       <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4 text-white">
         <h1 className="text-4xl font-black mb-2">Unirse al juego</h1>
         <p className="text-white/70 font-bold mb-8">Código: {code}</p>
-        
+
         <div className="bg-white text-gray-800 p-8 rounded-2xl shadow-2xl w-full max-w-md">
           <input
             type="text"
@@ -148,24 +137,23 @@ export default function JoinGamePage() {
             onChange={(e) => setNickname(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
           />
-          
+
           <p className="font-bold text-center mb-4 text-[#46178F]">Elige tu avatar:</p>
           <div className="grid grid-cols-5 gap-2 mb-6">
             {AVATARS.map((av) => (
               <button
                 key={av}
                 onClick={() => setSelectedAvatar(av)}
-                className={`text-3xl p-2 rounded-xl transition ${
-                  selectedAvatar === av 
-                    ? 'bg-[#46178F] scale-110 shadow-lg' 
+                className={`text-3xl p-2 rounded-xl transition ${selectedAvatar === av
+                    ? 'bg-[#46178F] scale-110 shadow-lg'
                     : 'bg-gray-100 hover:bg-gray-200'
-                }`}
+                  }`}
               >
                 {av}
               </button>
             ))}
           </div>
-          
+
           <button
             onClick={handleJoin}
             disabled={!nickname.trim()}
@@ -182,24 +170,24 @@ export default function JoinGamePage() {
   return (
     <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4">
       {step === 'waiting' && (
-        <WaitingRoom 
-          gameCode={code} 
-          isHost={false} 
-          onStartGame={() => {}}
+        <WaitingRoom
+          gameCode={code}
+          isHost={false}
+          onStartGame={() => { }}
           playerNickname={nickname}
           playerAvatar={selectedAvatar}
           playerId={playerId || undefined}
         />
       )}
-      
+
       {step === 'question' && currentQuestion && (
-        <QuestionScreen 
-          question={currentQuestion} 
-          isHost={false} 
-          onPlayerAnswer={handlePlayerAnswer} 
+        <QuestionScreen
+          question={currentQuestion}
+          isHost={false}
+          onPlayerAnswer={handlePlayerAnswer}
         />
       )}
-      
+
       {step === 'ranking' && <Podium topPlayers={[]} />}
     </div>
   );
