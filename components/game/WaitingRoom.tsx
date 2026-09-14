@@ -15,10 +15,9 @@ interface WaitingRoomProps {
   gameCode: string;
   isHost: boolean;
   onStartGame: () => void;
-  // Nuevas props para el jugador
   playerNickname?: string;
   playerAvatar?: string;
-  playerId?: string; // ID único del jugador en la BD
+  playerId?: string;
 }
 
 export default function WaitingRoom({ 
@@ -32,14 +31,11 @@ export default function WaitingRoom({
   const [players, setPlayers] = useState<Player[]>([]);
 
   useEffect(() => {
-    // ⚠️ CLAVE: Usar un nombre de canal consistente
     const channelName = `waiting-room:${gameCode}`;
     
     const channel = supabase.channel(channelName, {
       config: { 
         presence: { 
-          // ⚠️ CLAVE: Cada jugador necesita una key ÚNICA
-          // Usamos el playerId de la BD, o generamos uno aleatorio
           key: playerId || crypto.randomUUID() 
         } 
       },
@@ -48,7 +44,6 @@ export default function WaitingRoom({
     const extractPlayers = (state: any): Player[] => {
       const playersList: Player[] = [];
       for (const key in state) {
-        // state[key] es un array de presencias con esa key
         const presence = state[key][0] as any;
         if (presence && presence.nickname) {
           playersList.push({
@@ -65,36 +60,26 @@ export default function WaitingRoom({
     channel
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
-        console.log('🔄 Sync completo. Estado:', state);
         setPlayers(extractPlayers(state));
       })
-      .on('presence', { event: 'join' }, ({ key, newPresences }) => {
-        console.log('✅ Se unió:', key, newPresences);
+      .on('presence', { event: 'join' }, () => {
         const state = channel.presenceState();
         setPlayers(extractPlayers(state));
       })
-      .on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
-        console.log('❌ Se fue:', key, leftPresences);
+      .on('presence', { event: 'leave' }, () => {
         const state = channel.presenceState();
         setPlayers(extractPlayers(state));
       })
       .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('✅ Conectado al canal:', channelName);
-          
-          // Solo el jugador se registra (NO el host)
-          if (!isHost && playerNickname) {
-            await channel.track({ 
-              nickname: playerNickname, 
-              avatar: playerAvatar || '🐱'
-            });
-            console.log('✅ Registrado como:', playerNickname, playerAvatar);
-          }
+        if (status === 'SUBSCRIBED' && !isHost && playerNickname) {
+          await channel.track({ 
+            nickname: playerNickname, 
+            avatar: playerAvatar || '🐱'
+          });
         }
       });
 
     return () => {
-      console.log('🔌 Desconectando del canal:', channelName);
       supabase.removeChannel(channel);
     };
   }, [gameCode, isHost, playerId, playerNickname, playerAvatar]);
