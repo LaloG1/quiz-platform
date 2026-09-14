@@ -2,8 +2,14 @@
 
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { Player } from './Podium';
 import JoinCard from './JoinCard';
+
+interface Player {
+  id: string;
+  nickname: string;
+  avatar: string;
+  points: number;
+}
 
 interface WaitingRoomProps {
   gameCode: string;
@@ -36,14 +42,17 @@ export default function WaitingRoom({ gameCode, isHost, onStartGame }: WaitingRo
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          await channel.track({ nickname: 'Jugador Anónimo', avatar: '🐱' }); // En prod, usa el perfil real
+          // ⚠️ CORRECCIÓN AQUÍ: Solo el jugador (NO el host) se agrega a la lista
+          if (!isHost) {
+            await channel.track({ nickname: 'Jugador Nuevo', avatar: '🐶' }); 
+          }
         }
       });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [gameCode]);
+  }, [gameCode, isHost]); // Agregamos isHost a las dependencias
 
   return (
     <div className="flex flex-col items-center w-full max-w-4xl mx-auto p-4">
@@ -53,21 +62,26 @@ export default function WaitingRoom({ gameCode, isHost, onStartGame }: WaitingRo
         <h3 className="text-2xl font-black text-white mb-4 text-center">
           Jugadores en sala ({players.length})
         </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {players.map((p) => (
-            <div key={p.id} className="bg-white rounded-xl p-4 flex flex-col items-center shadow-lg animate-bounce-in">
-              <span className="text-4xl mb-2">{p.avatar}</span>
-              <span className="font-bold text-[#46178F] truncate w-full text-center">{p.nickname}</span>
-            </div>
-          ))}
-        </div>
+        
+        {players.length === 0 ? (
+          <p className="text-white/70 text-center font-bold animate-pulse">Esperando a que alguien se una...</p>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {players.map((p) => (
+              <div key={p.id} className="bg-white rounded-xl p-4 flex flex-col items-center shadow-lg animate-bounce-in">
+                <span className="text-4xl mb-2">{p.avatar}</span>
+                <span className="font-bold text-[#46178F] truncate w-full text-center">{p.nickname}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {isHost && (
         <button
           onClick={onStartGame}
           disabled={players.length === 0}
-          className="mt-8 px-10 py-4 bg-[#26890C] hover:bg-[#1e6b0a] disabled:bg-gray-400 text-white font-black text-2xl rounded-xl shadow-lg transform transition hover:scale-105 active:scale-95 border-b-4 border-[#145206]"
+          className="mt-8 px-10 py-4 bg-[#26890C] hover:bg-[#1e6b0a] disabled:bg-gray-400 disabled:border-gray-500 text-white font-black text-2xl rounded-xl shadow-lg transform transition hover:scale-105 active:scale-95 border-b-4 border-[#145206]"
         >
           ¡INICIAR JUEGO!
         </button>
