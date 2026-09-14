@@ -25,26 +25,51 @@ export default function WaitingRoom({ gameCode, isHost, onStartGame }: WaitingRo
       config: { presence: { key: 'player' } },
     });
 
+    // Función helper para extraer la lista de jugadores del estado de Presence
+    const extractPlayers = (state: any): Player[] => {
+      const playersList: Player[] = [];
+      for (const id in state) {
+        const presence = state[id][0] as any;
+        playersList.push({
+          id: id,
+          nickname: presence.nickname,
+          avatar: presence.avatar,
+          points: 0,
+        });
+      }
+      return playersList;
+    };
+
+    // Escuchar TODOS los eventos de Presence
     channel
       .on('presence', { event: 'sync' }, () => {
+        // Se dispara cuando el estado completo se sincroniza (al conectarse)
         const state = channel.presenceState();
-        const playersList: Player[] = [];
-        for (const id in state) {
-          const presence = state[id][0] as any;
-          playersList.push({
-            id: id,
-            nickname: presence.nickname,
-            avatar: presence.avatar,
-            points: 0,
-          });
-        }
-        setPlayers(playersList);
+        setPlayers(extractPlayers(state));
+      })
+      .on('presence', { event: 'join' }, ({ newPresences }) => {
+        // Se dispara cuando alguien nuevo se une
+        console.log('✅ Nuevo jugador se unió:', newPresences);
+        const state = channel.presenceState();
+        setPlayers(extractPlayers(state));
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
+        // Se dispara cuando alguien se desconecta
+        console.log('❌ Jugador se fue:', leftPresences);
+        const state = channel.presenceState();
+        setPlayers(extractPlayers(state));
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          // ⚠️ CORRECCIÓN AQUÍ: Solo el jugador (NO el host) se agrega a la lista
+          console.log('✅ Suscrito al canal de sala:', gameCode);
+          
+          // Solo el jugador (NO el host) se registra en Presence
           if (!isHost) {
-            await channel.track({ nickname: 'Jugador Nuevo', avatar: '🐶' }); 
+            await channel.track({ 
+              nickname: 'Jugador Nuevo', 
+              avatar: '🐶' 
+            });
+            console.log('✅ Jugador registrado en Presence');
           }
         }
       });
@@ -52,7 +77,7 @@ export default function WaitingRoom({ gameCode, isHost, onStartGame }: WaitingRo
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [gameCode, isHost]); // Agregamos isHost a las dependencias
+  }, [gameCode, isHost]);
 
   return (
     <div className="flex flex-col items-center w-full max-w-4xl mx-auto p-4">
@@ -64,13 +89,20 @@ export default function WaitingRoom({ gameCode, isHost, onStartGame }: WaitingRo
         </h3>
         
         {players.length === 0 ? (
-          <p className="text-white/70 text-center font-bold animate-pulse">Esperando a que alguien se una...</p>
+          <p className="text-white/70 text-center font-bold animate-pulse">
+            Esperando a que alguien se una...
+          </p>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {players.map((p) => (
-              <div key={p.id} className="bg-white rounded-xl p-4 flex flex-col items-center shadow-lg animate-bounce-in">
+              <div 
+                key={p.id} 
+                className="bg-white rounded-xl p-4 flex flex-col items-center shadow-lg transform transition hover:scale-105"
+              >
                 <span className="text-4xl mb-2">{p.avatar}</span>
-                <span className="font-bold text-[#46178F] truncate w-full text-center">{p.nickname}</span>
+                <span className="font-bold text-[#46178F] truncate w-full text-center">
+                  {p.nickname}
+                </span>
               </div>
             ))}
           </div>
