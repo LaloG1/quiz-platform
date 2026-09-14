@@ -1,22 +1,9 @@
-import { redirect } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
-
-// Cliente de Supabase para el servidor (sin cookies, solo para verificar sesión)
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-export default async function HomePage() {
-  // Intentamos obtener la sesión del usuario desde las cookies
-  // Nota: En Next.js App Router, para verificar sesión real necesitamos el cliente del servidor con cookies
-  // Para simplificar, redirigimos al login y dejamos que él maneje la redirección si ya está logueado
-  
+export default function HomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#46178F] via-[#5a21b5] to-[#1368CE] flex flex-col items-center justify-center p-6 text-white">
       
       {/* Logo / Título */}
-      <div className="text-center mb-12 animate-fade-in">
+      <div className="text-center mb-12">
         <h1 className="text-6xl md:text-8xl font-black mb-4 drop-shadow-2xl tracking-tight">
           🎮 QuizArena
         </h1>
@@ -34,7 +21,7 @@ export default async function HomePage() {
           Iniciar Sesión
         </a>
         <a
-          href="/login?mode=register"
+          href="/login"
           className="flex-1 py-5 bg-[#26890C] hover:bg-[#1e6b0a] text-white font-black text-xl rounded-2xl shadow-2xl hover:scale-105 active:scale-95 transition transform text-center border-b-4 border-[#145206]"
         >
           Crear Cuenta
