@@ -15,69 +15,89 @@ interface WaitingRoomProps {
   gameCode: string;
   isHost: boolean;
   onStartGame: () => void;
+  // Nuevas props para el jugador
+  playerNickname?: string;
+  playerAvatar?: string;
+  playerId?: string; // ID único del jugador en la BD
 }
 
-export default function WaitingRoom({ gameCode, isHost, onStartGame }: WaitingRoomProps) {
+export default function WaitingRoom({ 
+  gameCode, 
+  isHost, 
+  onStartGame,
+  playerNickname,
+  playerAvatar,
+  playerId
+}: WaitingRoomProps) {
   const [players, setPlayers] = useState<Player[]>([]);
 
   useEffect(() => {
-    const channel = supabase.channel(`room:${gameCode}`, {
-      config: { presence: { key: 'player' } },
+    // ⚠️ CLAVE: Usar un nombre de canal consistente
+    const channelName = `waiting-room:${gameCode}`;
+    
+    const channel = supabase.channel(channelName, {
+      config: { 
+        presence: { 
+          // ⚠️ CLAVE: Cada jugador necesita una key ÚNICA
+          // Usamos el playerId de la BD, o generamos uno aleatorio
+          key: playerId || crypto.randomUUID() 
+        } 
+      },
     });
 
-    // Función helper para extraer la lista de jugadores del estado de Presence
     const extractPlayers = (state: any): Player[] => {
       const playersList: Player[] = [];
-      for (const id in state) {
-        const presence = state[id][0] as any;
-        playersList.push({
-          id: id,
-          nickname: presence.nickname,
-          avatar: presence.avatar,
-          points: 0,
-        });
+      for (const key in state) {
+        // state[key] es un array de presencias con esa key
+        const presence = state[key][0] as any;
+        if (presence && presence.nickname) {
+          playersList.push({
+            id: key,
+            nickname: presence.nickname,
+            avatar: presence.avatar || '🐱',
+            points: 0,
+          });
+        }
       }
       return playersList;
     };
 
-    // Escuchar TODOS los eventos de Presence
     channel
       .on('presence', { event: 'sync' }, () => {
-        // Se dispara cuando el estado completo se sincroniza (al conectarse)
+        const state = channel.presenceState();
+        console.log('🔄 Sync completo. Estado:', state);
+        setPlayers(extractPlayers(state));
+      })
+      .on('presence', { event: 'join' }, ({ key, newPresences }) => {
+        console.log('✅ Se unió:', key, newPresences);
         const state = channel.presenceState();
         setPlayers(extractPlayers(state));
       })
-      .on('presence', { event: 'join' }, ({ newPresences }) => {
-        // Se dispara cuando alguien nuevo se une
-        console.log('✅ Nuevo jugador se unió:', newPresences);
-        const state = channel.presenceState();
-        setPlayers(extractPlayers(state));
-      })
-      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
-        // Se dispara cuando alguien se desconecta
-        console.log('❌ Jugador se fue:', leftPresences);
+      .on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
+        console.log('❌ Se fue:', key, leftPresences);
         const state = channel.presenceState();
         setPlayers(extractPlayers(state));
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('✅ Suscrito al canal de sala:', gameCode);
+          console.log('✅ Conectado al canal:', channelName);
           
-          // Solo el jugador (NO el host) se registra en Presence
-          if (!isHost) {
+          // Solo el jugador se registra (NO el host)
+          if (!isHost && playerNickname) {
             await channel.track({ 
-              nickname: 'Jugador Nuevo', 
-              avatar: '🐶' 
+              nickname: playerNickname, 
+              avatar: playerAvatar || '🐱'
             });
-            console.log('✅ Jugador registrado en Presence');
+            console.log('✅ Registrado como:', playerNickname, playerAvatar);
           }
         }
       });
 
     return () => {
+      console.log('🔌 Desconectando del canal:', channelName);
       supabase.removeChannel(channel);
     };
-  }, [gameCode, isHost]);
+  }, [gameCode, isHost, playerId, playerNickname, playerAvatar]);
 
   return (
     <div className="flex flex-col items-center w-full max-w-4xl mx-auto p-4">
@@ -100,7 +120,7 @@ export default function WaitingRoom({ gameCode, isHost, onStartGame }: WaitingRo
                 className="bg-white rounded-xl p-4 flex flex-col items-center shadow-lg transform transition hover:scale-105"
               >
                 <span className="text-4xl mb-2">{p.avatar}</span>
-                <span className="font-bold text-[#46178F] truncate w-full text-center">
+                <span className="font-bold text-[#46178F] truncate w-full text-center text-sm">
                   {p.nickname}
                 </span>
               </div>
