@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
+import { useEffect } from 'react';
 
 export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -11,6 +12,16 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [error, setError] = useState('');
   const router = useRouter();
+
+  useEffect(() => {
+  const checkUser = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      router.push('/dashboard'); // Si ya está logueado, al dashboard
+    }
+  };
+  checkUser();
+}, [router]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
