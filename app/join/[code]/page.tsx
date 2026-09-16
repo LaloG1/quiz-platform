@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import WaitingRoom from '@/components/game/WaitingRoom';
 import QuestionScreen from '@/components/game/QuestionScreen';
 import Podium from '@/components/game/Podium';
 import RankingTable from '@/components/game/RankingTable';
+import PointsReveal from '@/components/game/PointsReveal';
 import { calculatePoints } from '@/lib/score';
 
 const AVATARS = ['🐱', '🐶', '🦊', '🐸', '🐼', '🐨', '🦁', '🐯', '🐵', '🐰', '🐷', '🐔', '🦉', '🐙', '🦄'];
@@ -20,7 +21,6 @@ interface RankedPlayer {
 
 export default function JoinGamePage() {
   const params = useParams();
-  const router = useRouter();
   const code = params.code as string;
 
   const [step, setStep] = useState<'join-form' | 'waiting' | 'question' | 'reveal' | 'ranking'>('join-form');
@@ -32,6 +32,12 @@ export default function JoinGamePage() {
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
   const [selectedAnswerId, setSelectedAnswerId] = useState<string | null>(null);
   const [fullRanking, setFullRanking] = useState<RankedPlayer[]>([]);
+  
+  // 🎯 CLAVE: Guardamos los puntos ganados en CADA pregunta localmente
+  const [lastPointsEarned, setLastPointsEarned] = useState(0);
+  const [currentTotalScore, setCurrentTotalScore] = useState(0);
+  const [currentRankPosition, setCurrentRankPosition] = useState(1);
+  const [wasCorrect, setWasCorrect] = useState(false);
 
   // Listener de broadcast del host
   useEffect(() => {
@@ -46,10 +52,24 @@ export default function JoinGamePage() {
         if (state === 'question' && question) {
           setStep('question');
           setCurrentQuestion(question);
-          setSelectedAnswerId(null); // Resetear respuesta al cambiar pregunta
+          setSelectedAnswerId(null);
+          setLastPointsEarned(0);
+          setWasCorrect(false);
         } else if (state === 'reveal') {
-          setStep('reveal');
-          // correctAnswerId se usa para iluminar la respuesta correcta
+          // 🎯 Usar los puntos que YA guardamos localmente (precisión absoluta)
+          // No necesitamos recalcular, ya los tenemos exactos
+          
+          // Actualizar ranking y calcular posición del jugador
+          if (ranking) {
+            setFullRanking(ranking);
+            const myIndex = ranking.findIndex((p: RankedPlayer) => p.id === playerId);
+            if (myIndex !== -1) {
+              setCurrentRankPosition(myIndex + 1);
+              setCurrentTotalScore(ranking[myIndex].points);
+            }
+          }
+          
+          // Marcar la respuesta correcta en la pregunta (para consistencia)
           setCurrentQuestion((prev: any) => {
             if (!prev) return prev;
             return {
@@ -60,6 +80,9 @@ export default function JoinGamePage() {
               }))
             };
           });
+          
+          // Cambiar a pantalla de reveal (puntos animados)
+          setStep('reveal');
         } else if (state === 'ranking') {
           setStep('ranking');
           if (ranking) setFullRanking(ranking);
@@ -70,7 +93,7 @@ export default function JoinGamePage() {
     return () => {
       supabase.removeChannel(broadcastChannel);
     };
-  }, [step, code]);
+  }, [step, code, playerId]);
 
   const handleJoin = async () => {
     if (!nickname.trim()) return;
@@ -109,16 +132,25 @@ export default function JoinGamePage() {
     setStep('waiting');
   };
 
+  // 🎯 CLAVE: Guardar puntos localmente al responder (precisión absoluta)
   const handlePlayerAnswer = async (answerId: string, timeMs: number) => {
     if (!playerId || !currentQuestion || !gameId) return;
 
     setSelectedAnswerId(answerId);
 
-    const isCorrect = currentQuestion.answers.find((a: any) => a.id === answerId)?.is_correct;
+    const selectedAnswer = currentQuestion.answers.find((a: any) => a.id === answerId);
+    const isCorrect = selectedAnswer?.is_correct || false;
+    
+    // Calcular puntos exactos basados en el tiempo real de respuesta
     const pointsEarned = isCorrect 
       ? calculatePoints(currentQuestion.time_limit, timeMs, currentQuestion.is_double_points) 
       : 0;
 
+    // 🎯 GUARDAR LOCALMENTE (precisión absoluta)
+    setLastPointsEarned(pointsEarned);
+    setWasCorrect(isCorrect);
+
+    // Guardar en la base de datos
     await supabase.from('game_answers').insert({
       game_id: gameId,
       player_id: playerId,
@@ -128,6 +160,7 @@ export default function JoinGamePage() {
       points_earned: pointsEarned
     });
 
+    // Actualizar total acumulado
     const { data: currentPlayer } = await supabase
       .from('game_players')
       .select('total_score')
@@ -140,6 +173,10 @@ export default function JoinGamePage() {
       .from('game_players')
       .update({ total_score: newTotalScore })
       .eq('id', playerId);
+      
+    setCurrentTotalScore(newTotalScore);
+    
+    console.log(`✅ Respuesta guardada: ${isCorrect ? 'Correcta' : 'Incorrecta'} | +${pointsEarned} pts | Total: ${newTotalScore}`);
   };
 
   // PANTALLA 1: Formulario de unión
@@ -189,10 +226,10 @@ export default function JoinGamePage() {
     );
   }
 
-  // PANTALLAS DEL JUEGO
-  return (
-    <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4">
-      {step === 'waiting' && (
+  // PANTALLA 2: Sala de espera
+  if (step === 'waiting') {
+    return (
+      <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4">
         <WaitingRoom 
           gameCode={code} 
           isHost={false} 
@@ -201,25 +238,53 @@ export default function JoinGamePage() {
           playerAvatar={selectedAvatar}
           playerId={playerId || undefined}
         />
-      )}
-      
-      {(step === 'question' || step === 'reveal') && currentQuestion && (
+      </div>
+    );
+  }
+
+  // PANTALLA 3: Pregunta activa (solo QuestionScreen)
+  if (step === 'question' && currentQuestion) {
+    return (
+      <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4">
         <QuestionScreen 
           key={currentQuestion.id}
           question={currentQuestion} 
           isHost={false}
           selectedAnswerId={selectedAnswerId}
-          revealCorrect={step === 'reveal'}
+          revealCorrect={false}
           onPlayerAnswer={handlePlayerAnswer}
         />
-      )}
-      
-      {step === 'ranking' && (
+      </div>
+    );
+  }
+
+  // 🎯 PANTALLA 4: Revelación de puntos (SOLO PointsReveal, no QuestionScreen)
+  if (step === 'reveal') {
+    return (
+      <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4">
+        <PointsReveal
+          avatar={selectedAvatar}
+          pointsEarned={lastPointsEarned}
+          totalScore={currentTotalScore}
+          rankPosition={currentRankPosition}
+          totalPlayers={fullRanking.length || 1}
+          wasCorrect={wasCorrect}
+        />
+      </div>
+    );
+  }
+
+  // PANTALLA 5: Ranking final
+  if (step === 'ranking') {
+    return (
+      <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4">
         <div className="w-full flex flex-col items-center">
           <Podium topPlayers={fullRanking.slice(0, 3)} />
           <RankingTable players={fullRanking} />
         </div>
-      )}
-    </div>
-  );
+      </div>
+    );
+  }
+
+  return null;
 }

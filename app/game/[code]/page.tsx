@@ -29,9 +29,12 @@ export default function HostGamePage() {
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
   const [fullRanking, setFullRanking] = useState<RankedPlayer[]>([]);
   const [timeLeft, setTimeLeft] = useState(0);
+  const [revealTimer, setRevealTimer] = useState(0);
 
   const channelRef = useRef<RealtimeChannel | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const revealTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const gameIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (channelRef.current) {
@@ -54,7 +57,13 @@ export default function HostGamePage() {
         return;
       }
 
-      setQuiz(game.quizzes);
+      gameIdRef.current = game.id;
+      setQuiz({
+        ...game.quizzes,
+        questions: [...(game.quizzes?.questions ?? [])].sort(
+          (a, b) => (a.order ?? 0) - (b.order ?? 0)
+        ),
+      });
       setGameState('waiting');
     };
     
@@ -67,6 +76,7 @@ export default function HostGamePage() {
         channelRef.current = null;
       }
       if (timerRef.current) clearInterval(timerRef.current);
+      if (revealTimerRef.current) clearInterval(revealTimerRef.current);
     };
   }, [code, router]);
 
@@ -80,10 +90,31 @@ export default function HostGamePage() {
     }
   };
 
-  // Timer del host
-  const startTimer = (seconds: number) => {
+  // Obtener ranking actualizado de la BD
+  const fetchCurrentRanking = async (): Promise<RankedPlayer[]> => {
+    if (!gameIdRef.current) return [];
+    
+    const { data: rankingData } = await supabase
+      .from('game_players')
+      .select('id, nickname, avatar, total_score')
+      .eq('game_id', gameIdRef.current)
+      .order('total_score', { ascending: false });
+
+    if (!rankingData) return [];
+    
+    return rankingData.map(p => ({
+      id: p.id,
+      nickname: p.nickname,
+      avatar: p.avatar,
+      points: p.total_score || 0
+    }));
+  };
+
+  // Timer del host para la pregunta
+  const startQuestionTimer = (seconds: number) => {
     if (timerRef.current) clearInterval(timerRef.current);
     setTimeLeft(seconds);
+    
     timerRef.current = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
@@ -96,9 +127,46 @@ export default function HostGamePage() {
     }, 1000);
   };
 
-  const handleTimeUp = () => {
-    // Revelar respuesta correcta automáticamente
-    handleRevealAnswer();
+  // Timer para la pantalla de reveal (4 segundos antes de poder avanzar)
+  const startRevealTimer = () => {
+    if (revealTimerRef.current) clearInterval(revealTimerRef.current);
+    setRevealTimer(4);
+    
+    revealTimerRef.current = setInterval(() => {
+      setRevealTimer((prev) => {
+        if (prev <= 1) {
+          if (revealTimerRef.current) clearInterval(revealTimerRef.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const handleTimeUp = async () => {
+    await handleRevealAnswer();
+  };
+
+  const handleRevealAnswer = async () => {
+    if (!currentQuestion) return;
+    if (timerRef.current) clearInterval(timerRef.current);
+    
+    // Obtener ranking actualizado
+    const updatedRanking = await fetchCurrentRanking();
+    setFullRanking(updatedRanking);
+    
+    setGameState('reveal');
+    const correctAnswer = currentQuestion.answers.find((a: any) => a.is_correct);
+    
+    // Enviar reveal + ranking actualizado a todos
+    broadcast({ 
+      state: 'reveal', 
+      correctAnswerId: correctAnswer?.id,
+      ranking: updatedRanking
+    });
+    
+    // Iniciar timer de 4 segundos antes de permitir avanzar
+    startRevealTimer();
   };
 
   const handleStartGame = () => {
@@ -109,19 +177,7 @@ export default function HostGamePage() {
     setCurrentQIndex(0);
     const formatted = formatQuestion(firstQ);
     broadcast({ state: 'question', question: formatted });
-    startTimer(firstQ.time_limit);
-  };
-
-  const handleRevealAnswer = () => {
-    if (!currentQuestion) return;
-    if (timerRef.current) clearInterval(timerRef.current);
-    
-    setGameState('reveal');
-    const correctAnswer = currentQuestion.answers.find((a: any) => a.is_correct);
-    broadcast({ 
-      state: 'reveal', 
-      correctAnswerId: correctAnswer?.id 
-    });
+    startQuestionTimer(firstQ.time_limit);
   };
 
   const handleNext = async () => {
@@ -135,37 +191,22 @@ export default function HostGamePage() {
       setGameState('question');
       const formatted = formatQuestion(nextQ);
       broadcast({ state: 'question', question: formatted });
-      startTimer(nextQ.time_limit);
+      startQuestionTimer(nextQ.time_limit);
     } else {
       // Finalizar juego
       if (timerRef.current) clearInterval(timerRef.current);
+      if (revealTimerRef.current) clearInterval(revealTimerRef.current);
       setGameState('ranking');
       
-      const { data: game } = await supabase.from('games').select('id').eq('code', code).single();
-      let ranking: RankedPlayer[] = [];
-      
-      if (game) {
-        await supabase.from('games').update({ status: 'finished' }).eq('id', game.id);
+      if (gameIdRef.current) {
+        await supabase.from('games').update({ status: 'finished' }).eq('id', gameIdRef.current);
 
-        const { data: rankingData } = await supabase
-          .from('game_players')
-          .select('id, nickname, avatar, total_score')
-          .eq('game_id', game.id)
-          .order('total_score', { ascending: false });
+        const finalRanking = await fetchCurrentRanking();
+        setFullRanking(finalRanking);
 
-        if (rankingData) {
-          ranking = rankingData.map(p => ({
-            id: p.id,
-            nickname: p.nickname,
-            avatar: p.avatar,
-            points: p.total_score || 0
-          }));
-          setFullRanking(ranking);
-        }
+        // Enviar ranking final a todos
+        broadcast({ state: 'ranking', ranking: finalRanking });
       }
-
-      // Enviar ranking a todos los jugadores
-      broadcast({ state: 'ranking', ranking });
     }
   };
 
@@ -185,10 +226,17 @@ export default function HostGamePage() {
       
       {/* Timer del host */}
       {(gameState === 'question' || gameState === 'reveal') && (
-        <div className="mb-4 bg-white rounded-full px-6 py-2 shadow-lg">
-          <span className="font-black text-2xl text-[#46178F]">
-            ⏱️ {timeLeft}s
-          </span>
+        <div className="mb-4 bg-white rounded-full px-6 py-2 shadow-lg flex items-center gap-3">
+          {gameState === 'question' ? (
+            <span className="font-black text-2xl text-[#46178F]">⏱️ {timeLeft}s</span>
+          ) : (
+            <>
+              <span className="font-black text-2xl text-[#26890C]">✨ Respuesta revelada</span>
+              {revealTimer > 0 && (
+                <span className="text-sm font-bold text-gray-500">({revealTimer}s)</span>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -205,19 +253,11 @@ export default function HostGamePage() {
             revealCorrect={gameState === 'reveal'}
           />
           
-          <div className="flex justify-center gap-4 mt-8">
-            {gameState === 'question' && (
-              <button
-                onClick={handleRevealAnswer}
-                className="px-8 py-4 bg-[#E21B3C] hover:bg-[#c01530] text-white font-black text-xl rounded-xl shadow-lg border-b-4 border-[#991025] transition transform hover:scale-105"
-              >
-                ✨ Mostrar Respuesta
-              </button>
-            )}
-            
+          <div className="flex justify-center mt-8">
             <button
               onClick={handleNext}
-              className="px-8 py-4 bg-[#D89E00] hover:bg-[#b38300] text-white font-black text-xl rounded-xl shadow-lg border-b-4 border-[#8c6700] transition transform hover:scale-105"
+              disabled={revealTimer > 0}
+              className="px-8 py-4 bg-[#D89E00] hover:bg-[#b38300] disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-black text-xl rounded-xl shadow-lg border-b-4 border-[#8c6700] transition transform hover:scale-105 active:scale-95"
             >
               {currentQIndex < (quiz?.questions?.length || 0) - 1 
                 ? 'Siguiente Pregunta →' 
