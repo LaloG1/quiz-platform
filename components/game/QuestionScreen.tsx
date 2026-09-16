@@ -19,9 +19,11 @@ interface Question {
 interface QuestionScreenProps {
   question: Question;
   isHost: boolean;
-  selectedAnswerId?: string | null; // ID de la respuesta seleccionada por el jugador
-  revealCorrect?: boolean; // Si ya se reveló la respuesta correcta
+  selectedAnswerId?: string | null;
+  revealCorrect?: boolean;
   onPlayerAnswer?: (answerId: string, timeMs: number) => void;
+  currentQNumber?: number; // 🎯 Nuevo
+  totalQuestions?: number; // 🎯 Nuevo
 }
 
 const COLORS = [
@@ -36,7 +38,9 @@ export default function QuestionScreen({
   isHost, 
   selectedAnswerId = null,
   revealCorrect = false,
-  onPlayerAnswer 
+  onPlayerAnswer,
+  currentQNumber,
+  totalQuestions
 }: QuestionScreenProps) {
   const [timeLeft, setTimeLeft] = useState(question.time_limit);
   const [localAnswered, setLocalAnswered] = useState(false);
@@ -75,19 +79,16 @@ export default function QuestionScreen({
     );
   }
 
-  // Determinar el estado visual de cada respuesta
   const getAnswerStyle = (ans: Answer, idx: number) => {
     const color = COLORS[idx];
     const isSelected = ans.id === selectedAnswerId;
     const isCorrect = ans.is_correct;
     
-    // Estado por defecto: todas visibles
     let opacity = 'opacity-100';
     let scale = '';
     let ring = '';
     let extra = '';
 
-    // Si el jugador ya seleccionó (y aún no se revela)
     if (selectedAnswerId && !revealCorrect) {
       if (isSelected) {
         scale = 'scale-105';
@@ -97,7 +98,6 @@ export default function QuestionScreen({
       }
     }
 
-    // Si ya se reveló la respuesta correcta
     if (revealCorrect) {
       if (isCorrect) {
         scale = 'scale-105';
@@ -115,21 +115,29 @@ export default function QuestionScreen({
     <div className="flex flex-col items-center w-full max-w-5xl mx-auto p-4 h-full">
       {/* Pregunta y timer */}
       <div className="w-full bg-white rounded-2xl p-6 mb-6 shadow-xl text-center relative overflow-hidden">
+        
+        {/* 🎯 Indicador de pregunta */}
+        {currentQNumber && totalQuestions && (
+          <div className="absolute top-3 left-3 bg-[#46178F] text-white px-3 py-1 rounded-full font-black text-xs md:text-sm shadow-md z-10">
+            Pregunta {currentQNumber} de {totalQuestions}
+          </div>
+        )}
+
         {!isHost && (
           <div 
             className="absolute top-0 left-0 h-2 bg-[#46178F] transition-all duration-1000" 
             style={{ width: `${(timeLeft / question.time_limit) * 100}%` }} 
           />
         )}
-        <h2 className="text-2xl md:text-4xl font-black text-[#46178F] mt-2">
+        <h2 className="text-2xl md:text-4xl font-black text-[#46178F] mt-2 md:mt-6">
           {question.question}
         </h2>
         {!isHost && !revealCorrect && (
           <p className="text-xl font-bold text-gray-500 mt-2">{timeLeft}s</p>
         )}
         {question.is_double_points && (
-          <div className="absolute top-2 right-2 bg-[#D89E00] text-white px-3 py-1 rounded-full font-black text-sm">
-            x2
+          <div className="absolute top-3 right-3 bg-[#D89E00] text-white px-3 py-1 rounded-full font-black text-sm shadow-md z-10">
+            x2 Puntos
           </div>
         )}
       </div>

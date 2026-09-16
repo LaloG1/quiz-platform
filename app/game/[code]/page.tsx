@@ -35,7 +35,7 @@ export default function HostGamePage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const revealTimerRef = useRef<NodeJS.Timeout | null>(null);
   const gameIdRef = useRef<string | null>(null);
-  
+
   // 🎯 CLAVE: Usar refs para acceder siempre al valor más reciente
   const currentQuestionRef = useRef<any>(null);
   const currentQIndexRef = useRef<number>(0);
@@ -108,7 +108,7 @@ export default function HostGamePage() {
       quizRef.current = game.quizzes;
       setGameState('waiting');
     };
-    
+
     loadData();
     channel.subscribe();
 
@@ -124,17 +124,17 @@ export default function HostGamePage() {
 
   const broadcast = (payload: any) => {
     if (channelRef.current) {
-      channelRef.current.send({ 
-        type: 'broadcast', 
-        event: 'game_update', 
-        payload 
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'game_update',
+        payload
       });
     }
   };
 
   const fetchCurrentRanking = async (): Promise<RankedPlayer[]> => {
     if (!gameIdRef.current) return [];
-    
+
     for (let attempt = 1; attempt <= 3; attempt++) {
       const { data: rankingData, error } = await supabase
         .from('game_players')
@@ -154,7 +154,7 @@ export default function HostGamePage() {
       }
 
       console.log(`✅ [Host] Intento ${attempt} exitoso. Jugadores:`, rankingData.length);
-      
+
       return rankingData.map(p => ({
         id: p.id,
         nickname: p.nickname,
@@ -169,14 +169,14 @@ export default function HostGamePage() {
 
   const startQuestionTimer = (seconds: number) => {
     console.log('⏱️ [Host] Iniciando timer con', seconds, 'segundos');
-    
+
     if (timerRef.current) clearInterval(timerRef.current);
     setTimeLeft(seconds);
-    
+
     timerRef.current = setInterval(() => {
       setTimeLeft((prev) => {
         console.log('⏱️ [Host] Timer tick:', prev - 1);
-        
+
         if (prev <= 1) {
           console.log('⏱️ [Host] Timer llegó a 0, llamando handleTimeUp');
           if (timerRef.current) clearInterval(timerRef.current);
@@ -191,7 +191,7 @@ export default function HostGamePage() {
   const startRevealTimer = () => {
     if (revealTimerRef.current) clearInterval(revealTimerRef.current);
     setRevealTimer(4);
-    
+
     revealTimerRef.current = setInterval(() => {
       setRevealTimer((prev) => {
         if (prev <= 1) {
@@ -206,51 +206,51 @@ export default function HostGamePage() {
   const handleTimeUp = async () => {
     console.log('🔥 [Host] handleTimeUp ejecutado');
     console.log('⏳ [Host] Esperando 2 segundos...');
-    
+
     await new Promise(resolve => setTimeout(resolve, 2000));
-    
+
     console.log('✅ [Host] Delay completado, llamando handleRevealAnswer');
     await handleRevealAnswer();
   };
 
   const handleRevealAnswer = async () => {
     console.log('🎬 [Host] handleRevealAnswer ejecutado');
-    
+
     const question = currentQuestionRef.current;
     console.log('🎬 [Host] currentQuestionRef.current:', question);
-    
+
     if (!question) {
       console.error('❌ [Host] currentQuestion es null/undefined');
       return;
     }
-    
+
     if (timerRef.current) {
       console.log('🎬 [Host] Limpiando timer');
       clearInterval(timerRef.current);
     }
-    
+
     console.log('📊 [Host] Obteniendo ranking...');
     const updatedRanking = await fetchCurrentRanking();
     console.log('📊 [Host] Ranking obtenido:', updatedRanking);
-    
+
     setFullRanking(updatedRanking);
-    
+
     console.log('🎬 [Host] Cambiando gameState a reveal');
     setGameState('reveal');
-    
+
     const correctAnswer = question.answers.find((a: any) => a.is_correct);
     console.log('✅ [Host] Respuesta correcta:', correctAnswer);
-    
-    const payload = { 
-      state: 'reveal', 
+
+    const payload = {
+      state: 'reveal',
       correctAnswerId: correctAnswer?.id,
       ranking: updatedRanking
     };
-    
+
     console.log('📡 [Host] Enviando broadcast:', payload);
     broadcast(payload);
     console.log('✅ [Host] Broadcast enviado');
-    
+
     console.log('⏱️ [Host] Iniciando revealTimer');
     startRevealTimer();
   };
@@ -258,43 +258,53 @@ export default function HostGamePage() {
   const handleStartGame = () => {
     const quizData = quizRef.current;
     if (!quizData || !quizData.questions) return;
-    
+
     setGameState('question');
     const firstQ = quizData.questions[0];
     setCurrentQuestion(firstQ);
     currentQuestionRef.current = firstQ;
     setCurrentQIndex(0);
     currentQIndexRef.current = 0;
-    
+
     const formatted = formatQuestion(firstQ);
-    broadcast({ state: 'question', question: formatted });
+    broadcast({
+      state: 'question',
+      question: formatted,
+      currentQNumber: 1,
+      totalQuestions: quizData.questions.length
+    });
     startQuestionTimer(firstQ.time_limit);
   };
 
   const handleNext = async () => {
     const quizData = quizRef.current;
     const qIndex = currentQIndexRef.current;
-    
+
     if (!quizData || !quizData.questions) return;
 
     if (qIndex < quizData.questions.length - 1) {
       const nextIdx = qIndex + 1;
       const nextQ = quizData.questions[nextIdx];
-      
+
       setCurrentQIndex(nextIdx);
       currentQIndexRef.current = nextIdx;
       setCurrentQuestion(nextQ);
       currentQuestionRef.current = nextQ;
-      
+
       setGameState('question');
       const formatted = formatQuestion(nextQ);
-      broadcast({ state: 'question', question: formatted });
+      broadcast({
+        state: 'question',
+        question: formatted,
+        currentQNumber: nextIdx + 1,
+        totalQuestions: quizData.questions.length
+      });
       startQuestionTimer(nextQ.time_limit);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
       if (revealTimerRef.current) clearInterval(revealTimerRef.current);
       setGameState('ranking');
-      
+
       if (gameIdRef.current) {
         await supabase.from('games').update({ status: 'finished' }).eq('id', gameIdRef.current);
 
@@ -319,7 +329,7 @@ export default function HostGamePage() {
       <header className="text-white font-black text-2xl mb-4 drop-shadow-md">
         {quiz?.title} <span className="text-[#D89E00]">({code})</span>
       </header>
-      
+
       {(gameState === 'question' || gameState === 'reveal') && (
         <div className="mb-4 bg-white rounded-full px-6 py-2 shadow-lg flex items-center gap-3">
           {gameState === 'question' ? (
@@ -341,21 +351,23 @@ export default function HostGamePage() {
 
       {(gameState === 'question' || gameState === 'reveal') && currentQuestion && (
         <div className="w-full max-w-5xl px-4">
-          <QuestionScreen 
+          <QuestionScreen
             key={currentQuestion.id}
-            question={formatQuestion(currentQuestion)} 
+            question={formatQuestion(currentQuestion)}
             isHost={true}
             revealCorrect={gameState === 'reveal'}
+            currentQNumber={currentQIndex + 1}
+            totalQuestions={quiz?.questions?.length || 0}
           />
-          
+
           <div className="flex justify-center mt-8">
             <button
               onClick={handleNext}
               disabled={revealTimer > 0}
               className="px-8 py-4 bg-[#D89E00] hover:bg-[#b38300] disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-black text-xl rounded-xl shadow-lg border-b-4 border-[#8c6700] transition transform hover:scale-105 active:scale-95"
             >
-              {currentQIndex < (quiz?.questions?.length || 0) - 1 
-                ? 'Siguiente Pregunta →' 
+              {currentQIndex < (quiz?.questions?.length || 0) - 1
+                ? 'Siguiente Pregunta →'
                 : '🏆 Ver Resultados Finales'}
             </button>
           </div>
@@ -366,17 +378,17 @@ export default function HostGamePage() {
         <div className="flex flex-col items-center w-full px-4">
           <Podium topPlayers={fullRanking.slice(0, 3)} />
           <RankingTable players={fullRanking} />
-          
+
           <div className="mt-8 flex flex-col items-center gap-4">
             {fullRanking.length > 0 && (
-              <ExportRankingPDF 
-                gameCode={code} 
-                quizTitle={quiz?.title || 'Quiz'} 
-                players={fullRanking} 
+              <ExportRankingPDF
+                gameCode={code}
+                quizTitle={quiz?.title || 'Quiz'}
+                players={fullRanking}
               />
             )}
-            
-            <button 
+
+            <button
               onClick={() => router.push('/dashboard')}
               className="px-6 py-3 bg-gray-600 hover:bg-gray-500 text-white font-bold rounded-xl shadow-lg transition"
             >

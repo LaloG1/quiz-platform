@@ -28,11 +28,14 @@ export default function JoinGamePage() {
   const [selectedAvatar, setSelectedAvatar] = useState(AVATARS[0]);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [gameId, setGameId] = useState<string | null>(null);
-  
+
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
   const [selectedAnswerId, setSelectedAnswerId] = useState<string | null>(null);
   const [fullRanking, setFullRanking] = useState<RankedPlayer[]>([]);
-  
+
+  const [currentQNumber, setCurrentQNumber] = useState(1);
+  const [totalQuestions, setTotalQuestions] = useState(0);
+
   // 🎯 CLAVE: Guardamos los puntos ganados en CADA pregunta localmente
   const [lastPointsEarned, setLastPointsEarned] = useState(0);
   const [currentTotalScore, setCurrentTotalScore] = useState(0);
@@ -40,48 +43,45 @@ export default function JoinGamePage() {
   const [wasCorrect, setWasCorrect] = useState(false);
 
   // Listener de broadcast del host
-   // Listener de broadcast del host
-    useEffect(() => {
-    console.log('🔌 [Jugador] Configurando listener de broadcast. Step actual:', step);
-    
-    if (step === 'join-form') {
-      console.log('⏸️ [Jugador] Step es join-form, no configurando listener');
-      return;
-    }
+  useEffect(() => {
+    if (step === 'join-form') return;
 
     const broadcastChannel = supabase.channel(`game:${code}`);
-    console.log('📡 [Jugador] Canal creado:', `game:${code}`);
 
     broadcastChannel
       .on('broadcast', { event: 'game_update' }, (payload) => {
-        console.log('📡 [Jugador] ¡BROADCAST RECIBIDO!', payload.payload);
-        
-        const { state, question, correctAnswerId, ranking } = payload.payload;
+        const { state, question, correctAnswerId, ranking, currentQNumber: qNum, totalQuestions: tQ } = payload.payload;
 
         if (state === 'question' && question) {
-          console.log('❓ [Jugador] Estado: question');
           setStep('question');
           setCurrentQuestion(question);
           setSelectedAnswerId(null);
           setLastPointsEarned(0);
           setWasCorrect(false);
+          if (qNum) setCurrentQNumber(qNum);
+          if (tQ) setTotalQuestions(tQ);
         } else if (state === 'reveal') {
-          console.log('✨ [Jugador] Estado: reveal');
-          console.log('🔍 [Jugador] lastPointsEarned:', lastPointsEarned);
-          console.log('🔍 [Jugador] wasCorrect:', wasCorrect);
-          console.log('🔍 [Jugador] Ranking:', ranking);
-          
           if (ranking && ranking.length > 0) {
             setFullRanking(ranking);
             const myIndex = ranking.findIndex((p: RankedPlayer) => p.id === playerId);
-            console.log('🔍 [Jugador] Mi índice en ranking:', myIndex);
-            
+
             if (myIndex !== -1) {
               setCurrentRankPosition(myIndex + 1);
               setCurrentTotalScore(ranking[myIndex].points);
+            } else {
+              const myPosition = ranking.filter((p: RankedPlayer) => p.points > currentTotalScore).length + 1;
+              setCurrentRankPosition(myPosition);
             }
+          } else {
+            setFullRanking([{
+              id: playerId || '',
+              nickname: nickname,
+              avatar: selectedAvatar,
+              points: currentTotalScore
+            }]);
+            setCurrentRankPosition(1);
           }
-          
+
           setCurrentQuestion((prev: any) => {
             if (!prev) return prev;
             return {
@@ -92,37 +92,31 @@ export default function JoinGamePage() {
               }))
             };
           });
-          
-          console.log('🎬 [Jugador] Cambiando a step: reveal');
+
           setStep('reveal');
         } else if (state === 'ranking') {
-          console.log('🏆 [Jugador] Estado: ranking');
           setStep('ranking');
           if (ranking) setFullRanking(ranking);
         }
       })
-      .subscribe((status) => {
-        console.log('📡 [Jugador] Estado de suscripción:', status);
-      });
+      .subscribe();
 
     return () => {
-      console.log('🔌 [Jugador] Limpiando listener');
       supabase.removeChannel(broadcastChannel);
     };
   }, [step, code, playerId]);
-
   const handleJoin = async () => {
     if (!nickname.trim()) return;
-    
+
     const { data: game } = await supabase
       .from('games')
       .select('id')
       .eq('code', code)
       .single();
-      
-    if (!game) { 
-      alert('Juego no encontrado. Verifica el código.'); 
-      return; 
+
+    if (!game) {
+      alert('Juego no encontrado. Verifica el código.');
+      return;
     }
 
     setGameId(game.id);
@@ -138,12 +132,12 @@ export default function JoinGamePage() {
       .select()
       .single();
 
-    if (error) { 
-      console.error(error); 
+    if (error) {
+      console.error(error);
       alert('Error al unirse: ' + error.message);
-      return; 
+      return;
     }
-    
+
     setPlayerId(player.id);
     setStep('waiting');
   };
@@ -156,10 +150,10 @@ export default function JoinGamePage() {
 
     const selectedAnswer = currentQuestion.answers.find((a: any) => a.id === answerId);
     const isCorrect = selectedAnswer?.is_correct || false;
-    
+
     // Calcular puntos exactos basados en el tiempo real de respuesta
-    const pointsEarned = isCorrect 
-      ? calculatePoints(currentQuestion.time_limit, timeMs, currentQuestion.is_double_points) 
+    const pointsEarned = isCorrect
+      ? calculatePoints(currentQuestion.time_limit, timeMs, currentQuestion.is_double_points)
       : 0;
 
     // 🎯 GUARDAR LOCALMENTE (precisión absoluta)
@@ -189,9 +183,9 @@ export default function JoinGamePage() {
       .from('game_players')
       .update({ total_score: newTotalScore })
       .eq('id', playerId);
-      
+
     setCurrentTotalScore(newTotalScore);
-    
+
     console.log(`✅ Respuesta guardada: ${isCorrect ? 'Correcta' : 'Incorrecta'} | +${pointsEarned} pts | Total: ${newTotalScore}`);
   };
 
@@ -201,7 +195,7 @@ export default function JoinGamePage() {
       <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4 text-white">
         <h1 className="text-4xl font-black mb-2">Unirse al juego</h1>
         <p className="text-white/70 font-bold mb-8">Código: {code}</p>
-        
+
         <div className="bg-white text-gray-800 p-8 rounded-2xl shadow-2xl w-full max-w-md">
           <input
             type="text"
@@ -212,24 +206,23 @@ export default function JoinGamePage() {
             onChange={(e) => setNickname(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
           />
-          
+
           <p className="font-bold text-center mb-4 text-[#46178F]">Elige tu avatar:</p>
           <div className="grid grid-cols-5 gap-2 mb-6">
             {AVATARS.map((av) => (
               <button
                 key={av}
                 onClick={() => setSelectedAvatar(av)}
-                className={`text-3xl p-2 rounded-xl transition ${
-                  selectedAvatar === av 
-                    ? 'bg-[#46178F] scale-110 shadow-lg' 
-                    : 'bg-gray-100 hover:bg-gray-200'
-                }`}
+                className={`text-3xl p-2 rounded-xl transition ${selectedAvatar === av
+                  ? 'bg-[#46178F] scale-110 shadow-lg'
+                  : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
               >
                 {av}
               </button>
             ))}
           </div>
-          
+
           <button
             onClick={handleJoin}
             disabled={!nickname.trim()}
@@ -246,10 +239,10 @@ export default function JoinGamePage() {
   if (step === 'waiting') {
     return (
       <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4">
-        <WaitingRoom 
-          gameCode={code} 
-          isHost={false} 
-          onStartGame={() => {}}
+        <WaitingRoom
+          gameCode={code}
+          isHost={false}
+          onStartGame={() => { }}
           playerNickname={nickname}
           playerAvatar={selectedAvatar}
           playerId={playerId || undefined}
@@ -262,22 +255,39 @@ export default function JoinGamePage() {
   if (step === 'question' && currentQuestion) {
     return (
       <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4">
-        <QuestionScreen 
+        <QuestionScreen
           key={currentQuestion.id}
-          question={currentQuestion} 
+          question={currentQuestion}
           isHost={false}
           selectedAnswerId={selectedAnswerId}
           revealCorrect={false}
           onPlayerAnswer={handlePlayerAnswer}
+          currentQNumber={currentQNumber}
+          totalQuestions={totalQuestions}
         />
       </div>
     );
   }
 
-  // 🎯 PANTALLA 4: Revelación de puntos (SOLO PointsReveal, no QuestionScreen)
-  if (step === 'reveal') {
+  // 🎯 PANTALLA 4: Revelación (Muestra la pregunta con la respuesta correcta Y los puntos)
+  if (step === 'reveal' && currentQuestion) {
     return (
-      <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4">
+      <div className="min-h-screen bg-[#46178F] flex flex-col items-center p-4 overflow-y-auto">
+
+        {/* 1. Primero mostramos la pregunta con la respuesta correcta iluminada */}
+        <div className="w-full max-w-5xl mb-6">
+          <QuestionScreen
+            key={`reveal-${currentQuestion.id}`}
+            question={currentQuestion}
+            isHost={false}
+            selectedAnswerId={selectedAnswerId}
+            revealCorrect={true}
+            currentQNumber={currentQNumber}
+            totalQuestions={totalQuestions}
+          />
+        </div>
+
+        {/* 2. Debajo, mostramos la animación de puntos y ranking */}
         <PointsReveal
           avatar={selectedAvatar}
           pointsEarned={lastPointsEarned}
@@ -286,6 +296,7 @@ export default function JoinGamePage() {
           totalPlayers={fullRanking.length || 1}
           wasCorrect={wasCorrect}
         />
+
       </div>
     );
   }
