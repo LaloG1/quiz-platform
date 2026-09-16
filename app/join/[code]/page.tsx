@@ -6,24 +6,34 @@ import { supabase } from '@/lib/supabase/client';
 import WaitingRoom from '@/components/game/WaitingRoom';
 import QuestionScreen from '@/components/game/QuestionScreen';
 import Podium from '@/components/game/Podium';
+import RankingTable from '@/components/game/RankingTable';
 import { calculatePoints } from '@/lib/score';
 
 const AVATARS = ['🐱', '🐶', '🦊', '🐸', '🐼', '🐨', '🦁', '🐯', '🐵', '🐰', '🐷', '🐔', '🦉', '🐙', '🦄'];
+
+interface RankedPlayer {
+  id: string;
+  nickname: string;
+  avatar: string;
+  points: number;
+}
 
 export default function JoinGamePage() {
   const params = useParams();
   const router = useRouter();
   const code = params.code as string;
 
-  const [step, setStep] = useState<'join-form' | 'waiting' | 'question' | 'ranking'>('join-form');
+  const [step, setStep] = useState<'join-form' | 'waiting' | 'question' | 'reveal' | 'ranking'>('join-form');
   const [nickname, setNickname] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState(AVATARS[0]);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [gameId, setGameId] = useState<string | null>(null);
-
+  
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
+  const [selectedAnswerId, setSelectedAnswerId] = useState<string | null>(null);
+  const [fullRanking, setFullRanking] = useState<RankedPlayer[]>([]);
 
-      // Listener de broadcast del host
+  // Listener de broadcast del host
   useEffect(() => {
     if (step === 'join-form') return;
 
@@ -31,16 +41,28 @@ export default function JoinGamePage() {
 
     broadcastChannel
       .on('broadcast', { event: 'game_update' }, (payload) => {
-        console.log('📡 Broadcast recibido:', payload.payload); // ← AGREGAR ESTE LOG
-        
-        const { state, question } = payload.payload;
+        const { state, question, correctAnswerId, ranking } = payload.payload;
 
         if (state === 'question' && question) {
-          console.log('✅ Pregunta recibida:', question); // ← AGREGAR ESTE LOG
           setStep('question');
           setCurrentQuestion(question);
+          setSelectedAnswerId(null); // Resetear respuesta al cambiar pregunta
+        } else if (state === 'reveal') {
+          setStep('reveal');
+          // correctAnswerId se usa para iluminar la respuesta correcta
+          setCurrentQuestion((prev: any) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              answers: prev.answers.map((a: any) => ({
+                ...a,
+                is_correct: a.id === correctAnswerId
+              }))
+            };
+          });
         } else if (state === 'ranking') {
           setStep('ranking');
+          if (ranking) setFullRanking(ranking);
         }
       })
       .subscribe();
@@ -52,22 +74,20 @@ export default function JoinGamePage() {
 
   const handleJoin = async () => {
     if (!nickname.trim()) return;
-
-    // 1. Buscar el juego por código
+    
     const { data: game } = await supabase
       .from('games')
       .select('id')
       .eq('code', code)
       .single();
-
-    if (!game) {
-      alert('Juego no encontrado. Verifica el código.');
-      return;
+      
+    if (!game) { 
+      alert('Juego no encontrado. Verifica el código.'); 
+      return; 
     }
 
     setGameId(game.id);
 
-    // 2. Registrar al jugador en la BD
     const { data: player, error } = await supabase
       .from('game_players')
       .insert({
@@ -79,13 +99,12 @@ export default function JoinGamePage() {
       .select()
       .single();
 
-    if (error) {
-      console.error(error);
+    if (error) { 
+      console.error(error); 
       alert('Error al unirse: ' + error.message);
-      return;
+      return; 
     }
-
-    // 3. Guardar el ID del jugador y pasar a la sala de espera
+    
     setPlayerId(player.id);
     setStep('waiting');
   };
@@ -93,9 +112,11 @@ export default function JoinGamePage() {
   const handlePlayerAnswer = async (answerId: string, timeMs: number) => {
     if (!playerId || !currentQuestion || !gameId) return;
 
+    setSelectedAnswerId(answerId);
+
     const isCorrect = currentQuestion.answers.find((a: any) => a.id === answerId)?.is_correct;
-    const pointsEarned = isCorrect
-      ? calculatePoints(currentQuestion.time_limit, timeMs, currentQuestion.is_double_points)
+    const pointsEarned = isCorrect 
+      ? calculatePoints(currentQuestion.time_limit, timeMs, currentQuestion.is_double_points) 
       : 0;
 
     await supabase.from('game_answers').insert({
@@ -107,7 +128,6 @@ export default function JoinGamePage() {
       points_earned: pointsEarned
     });
 
-    // Sumar puntos al total
     const { data: currentPlayer } = await supabase
       .from('game_players')
       .select('total_score')
@@ -128,7 +148,7 @@ export default function JoinGamePage() {
       <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4 text-white">
         <h1 className="text-4xl font-black mb-2">Unirse al juego</h1>
         <p className="text-white/70 font-bold mb-8">Código: {code}</p>
-
+        
         <div className="bg-white text-gray-800 p-8 rounded-2xl shadow-2xl w-full max-w-md">
           <input
             type="text"
@@ -139,23 +159,24 @@ export default function JoinGamePage() {
             onChange={(e) => setNickname(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
           />
-
+          
           <p className="font-bold text-center mb-4 text-[#46178F]">Elige tu avatar:</p>
           <div className="grid grid-cols-5 gap-2 mb-6">
             {AVATARS.map((av) => (
               <button
                 key={av}
                 onClick={() => setSelectedAvatar(av)}
-                className={`text-3xl p-2 rounded-xl transition ${selectedAvatar === av
-                    ? 'bg-[#46178F] scale-110 shadow-lg'
+                className={`text-3xl p-2 rounded-xl transition ${
+                  selectedAvatar === av 
+                    ? 'bg-[#46178F] scale-110 shadow-lg' 
                     : 'bg-gray-100 hover:bg-gray-200'
-                  }`}
+                }`}
               >
                 {av}
               </button>
             ))}
           </div>
-
+          
           <button
             onClick={handleJoin}
             disabled={!nickname.trim()}
@@ -172,25 +193,33 @@ export default function JoinGamePage() {
   return (
     <div className="min-h-screen bg-[#46178F] flex flex-col items-center justify-center p-4">
       {step === 'waiting' && (
-        <WaitingRoom
-          gameCode={code}
-          isHost={false}
-          onStartGame={() => { }}
+        <WaitingRoom 
+          gameCode={code} 
+          isHost={false} 
+          onStartGame={() => {}}
           playerNickname={nickname}
           playerAvatar={selectedAvatar}
           playerId={playerId || undefined}
         />
       )}
-
-      {step === 'question' && currentQuestion && (
-        <QuestionScreen
-          question={currentQuestion}
+      
+      {(step === 'question' || step === 'reveal') && currentQuestion && (
+        <QuestionScreen 
+          key={currentQuestion.id}
+          question={currentQuestion} 
           isHost={false}
+          selectedAnswerId={selectedAnswerId}
+          revealCorrect={step === 'reveal'}
           onPlayerAnswer={handlePlayerAnswer}
         />
       )}
-
-      {step === 'ranking' && <Podium topPlayers={[]} />}
+      
+      {step === 'ranking' && (
+        <div className="w-full flex flex-col items-center">
+          <Podium topPlayers={fullRanking.slice(0, 3)} />
+          <RankingTable players={fullRanking} />
+        </div>
+      )}
     </div>
   );
 }
