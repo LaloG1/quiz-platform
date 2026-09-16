@@ -8,6 +8,7 @@ import WaitingRoom from '@/components/game/WaitingRoom';
 import QuestionScreen from '@/components/game/QuestionScreen';
 import Podium from '@/components/game/Podium';
 import ExportRankingPDF from '@/components/export/ExportRankingPDF';
+import { formatQuestion } from '@/lib/format';
 
 interface RankedPlayer {
   id: string;
@@ -74,27 +75,15 @@ export default function HostGamePage() {
   }, [code, router]);
 
   // Función para enviar la pregunta COMPLETA a los jugadores
-  const broadcastQuestion = (question: any) => {
+    const broadcastQuestion = (question: any) => {
     if (channelRef.current) {
-      // Mapear al formato que espera QuestionScreen
-      const formattedQuestion = {
-        id: question.id,
-        question: question.question_text,
-        time_limit: question.time_limit,
-        is_double_points: question.is_double_points,
-        answers: question.answers.map((a: any) => ({
-          id: a.id,
-          text: a.answer_text,
-          is_correct: a.is_correct,
-        })),
-      };
-
+      const formatted = formatQuestion(question);
       channelRef.current.send({ 
         type: 'broadcast', 
         event: 'game_update', 
         payload: { 
           state: 'question', 
-          question: formattedQuestion 
+          question: formatted 
         }
       });
     }
@@ -170,8 +159,8 @@ export default function HostGamePage() {
       )}
 
       {gameState === 'question' && currentQuestion && (
-        <div className="w-full max-w-5xl px-4">
-          <QuestionScreen question={currentQuestion} isHost={true} />
+  <div className="w-full max-w-5xl px-4">
+    <QuestionScreen key={currentQuestion.id} question={formatQuestion(currentQuestion)} isHost={true} />
           <div className="flex justify-center mt-8">
             <button
               onClick={handleNext}

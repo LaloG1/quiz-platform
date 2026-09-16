@@ -23,7 +23,7 @@ export default function JoinGamePage() {
 
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
 
-    // Listener de broadcast del host
+      // Listener de broadcast del host
   useEffect(() => {
     if (step === 'join-form') return;
 
@@ -31,10 +31,12 @@ export default function JoinGamePage() {
 
     broadcastChannel
       .on('broadcast', { event: 'game_update' }, (payload) => {
+        console.log('📡 Broadcast recibido:', payload.payload); // ← AGREGAR ESTE LOG
+        
         const { state, question } = payload.payload;
 
         if (state === 'question' && question) {
-          // Usar los datos reales que envió el host
+          console.log('✅ Pregunta recibida:', question); // ← AGREGAR ESTE LOG
           setStep('question');
           setCurrentQuestion(question);
         } else if (state === 'ranking') {
