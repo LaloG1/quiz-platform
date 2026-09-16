@@ -35,6 +35,23 @@ export default function HostGamePage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const revealTimerRef = useRef<NodeJS.Timeout | null>(null);
   const gameIdRef = useRef<string | null>(null);
+  
+  // 🎯 CLAVE: Usar refs para acceder siempre al valor más reciente
+  const currentQuestionRef = useRef<any>(null);
+  const currentQIndexRef = useRef<number>(0);
+  const quizRef = useRef<any>(null);
+
+  useEffect(() => {
+    currentQuestionRef.current = currentQuestion;
+  }, [currentQuestion]);
+
+  useEffect(() => {
+    currentQIndexRef.current = currentQIndex;
+  }, [currentQIndex]);
+
+  useEffect(() => {
+    quizRef.current = quiz;
+  }, [quiz]);
 
   useEffect(() => {
     if (channelRef.current) {
@@ -45,9 +62,28 @@ export default function HostGamePage() {
     channelRef.current = channel;
 
     const loadData = async () => {
+      // 🎯 CORRECCIÓN: Quitamos el .order() del string de Supabase para evitar el error de TypeScript
       const { data: game, error } = await supabase
         .from('games')
-        .select('*, quizzes(title, questions(*, answers(*)))')
+        .select(`
+          *,
+          quizzes (
+            title,
+            questions (
+              id,
+              question_text,
+              time_limit,
+              is_double_points,
+              order,
+              answers (
+                id,
+                answer_text,
+                is_correct,
+                order
+              )
+            )
+          )
+        `)
         .eq('code', code)
         .single();
 
@@ -57,13 +93,19 @@ export default function HostGamePage() {
         return;
       }
 
+      // 🎯 CORRECCIÓN: Ordenamos las preguntas y respuestas en JavaScript
+      if (game.quizzes && game.quizzes.questions) {
+        game.quizzes.questions.sort((a: any, b: any) => a.order - b.order);
+        game.quizzes.questions.forEach((q: any) => {
+          if (q.answers) {
+            q.answers.sort((a: any, b: any) => a.order - b.order);
+          }
+        });
+      }
+
       gameIdRef.current = game.id;
-      setQuiz({
-        ...game.quizzes,
-        questions: [...(game.quizzes?.questions ?? [])].sort(
-          (a, b) => (a.order ?? 0) - (b.order ?? 0)
-        ),
-      });
+      setQuiz(game.quizzes);
+      quizRef.current = game.quizzes;
       setGameState('waiting');
     };
     
@@ -90,34 +132,53 @@ export default function HostGamePage() {
     }
   };
 
-  // Obtener ranking actualizado de la BD
   const fetchCurrentRanking = async (): Promise<RankedPlayer[]> => {
     if (!gameIdRef.current) return [];
     
-    const { data: rankingData } = await supabase
-      .from('game_players')
-      .select('id, nickname, avatar, total_score')
-      .eq('game_id', gameIdRef.current)
-      .order('total_score', { ascending: false });
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const { data: rankingData, error } = await supabase
+        .from('game_players')
+        .select('id, nickname, avatar, total_score')
+        .eq('game_id', gameIdRef.current)
+        .order('total_score', { ascending: false });
 
-    if (!rankingData) return [];
-    
-    return rankingData.map(p => ({
-      id: p.id,
-      nickname: p.nickname,
-      avatar: p.avatar,
-      points: p.total_score || 0
-    }));
+      if (error) {
+        console.error(`❌ [Host] Intento ${attempt} falló:`, error);
+        continue;
+      }
+
+      if (!rankingData || rankingData.length === 0) {
+        console.warn(`⚠️ [Host] Intento ${attempt}: Ranking vacío, esperando...`);
+        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        continue;
+      }
+
+      console.log(`✅ [Host] Intento ${attempt} exitoso. Jugadores:`, rankingData.length);
+      
+      return rankingData.map(p => ({
+        id: p.id,
+        nickname: p.nickname,
+        avatar: p.avatar,
+        points: p.total_score || 0
+      }));
+    }
+
+    console.error('❌ [Host] Todos los intentos fallaron');
+    return [];
   };
 
-  // Timer del host para la pregunta
   const startQuestionTimer = (seconds: number) => {
+    console.log('⏱️ [Host] Iniciando timer con', seconds, 'segundos');
+    
     if (timerRef.current) clearInterval(timerRef.current);
     setTimeLeft(seconds);
     
     timerRef.current = setInterval(() => {
       setTimeLeft((prev) => {
+        console.log('⏱️ [Host] Timer tick:', prev - 1);
+        
         if (prev <= 1) {
+          console.log('⏱️ [Host] Timer llegó a 0, llamando handleTimeUp');
           if (timerRef.current) clearInterval(timerRef.current);
           handleTimeUp();
           return 0;
@@ -127,7 +188,6 @@ export default function HostGamePage() {
     }, 1000);
   };
 
-  // Timer para la pantalla de reveal (4 segundos antes de poder avanzar)
   const startRevealTimer = () => {
     if (revealTimerRef.current) clearInterval(revealTimerRef.current);
     setRevealTimer(4);
@@ -144,56 +204,93 @@ export default function HostGamePage() {
   };
 
   const handleTimeUp = async () => {
+    console.log('🔥 [Host] handleTimeUp ejecutado');
+    console.log('⏳ [Host] Esperando 2 segundos...');
+    
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    console.log('✅ [Host] Delay completado, llamando handleRevealAnswer');
     await handleRevealAnswer();
   };
 
   const handleRevealAnswer = async () => {
-    if (!currentQuestion) return;
-    if (timerRef.current) clearInterval(timerRef.current);
+    console.log('🎬 [Host] handleRevealAnswer ejecutado');
     
-    // Obtener ranking actualizado
+    const question = currentQuestionRef.current;
+    console.log('🎬 [Host] currentQuestionRef.current:', question);
+    
+    if (!question) {
+      console.error('❌ [Host] currentQuestion es null/undefined');
+      return;
+    }
+    
+    if (timerRef.current) {
+      console.log('🎬 [Host] Limpiando timer');
+      clearInterval(timerRef.current);
+    }
+    
+    console.log('📊 [Host] Obteniendo ranking...');
     const updatedRanking = await fetchCurrentRanking();
+    console.log('📊 [Host] Ranking obtenido:', updatedRanking);
+    
     setFullRanking(updatedRanking);
     
+    console.log('🎬 [Host] Cambiando gameState a reveal');
     setGameState('reveal');
-    const correctAnswer = currentQuestion.answers.find((a: any) => a.is_correct);
     
-    // Enviar reveal + ranking actualizado a todos
-    broadcast({ 
+    const correctAnswer = question.answers.find((a: any) => a.is_correct);
+    console.log('✅ [Host] Respuesta correcta:', correctAnswer);
+    
+    const payload = { 
       state: 'reveal', 
       correctAnswerId: correctAnswer?.id,
       ranking: updatedRanking
-    });
+    };
     
-    // Iniciar timer de 4 segundos antes de permitir avanzar
+    console.log('📡 [Host] Enviando broadcast:', payload);
+    broadcast(payload);
+    console.log('✅ [Host] Broadcast enviado');
+    
+    console.log('⏱️ [Host] Iniciando revealTimer');
     startRevealTimer();
   };
 
   const handleStartGame = () => {
-    if (!quiz || !quiz.questions) return;
+    const quizData = quizRef.current;
+    if (!quizData || !quizData.questions) return;
+    
     setGameState('question');
-    const firstQ = quiz.questions[0];
+    const firstQ = quizData.questions[0];
     setCurrentQuestion(firstQ);
+    currentQuestionRef.current = firstQ;
     setCurrentQIndex(0);
+    currentQIndexRef.current = 0;
+    
     const formatted = formatQuestion(firstQ);
     broadcast({ state: 'question', question: formatted });
     startQuestionTimer(firstQ.time_limit);
   };
 
   const handleNext = async () => {
-    if (!quiz || !quiz.questions) return;
+    const quizData = quizRef.current;
+    const qIndex = currentQIndexRef.current;
+    
+    if (!quizData || !quizData.questions) return;
 
-    if (currentQIndex < quiz.questions.length - 1) {
-      const nextIdx = currentQIndex + 1;
+    if (qIndex < quizData.questions.length - 1) {
+      const nextIdx = qIndex + 1;
+      const nextQ = quizData.questions[nextIdx];
+      
       setCurrentQIndex(nextIdx);
-      const nextQ = quiz.questions[nextIdx];
+      currentQIndexRef.current = nextIdx;
       setCurrentQuestion(nextQ);
+      currentQuestionRef.current = nextQ;
+      
       setGameState('question');
       const formatted = formatQuestion(nextQ);
       broadcast({ state: 'question', question: formatted });
       startQuestionTimer(nextQ.time_limit);
     } else {
-      // Finalizar juego
       if (timerRef.current) clearInterval(timerRef.current);
       if (revealTimerRef.current) clearInterval(revealTimerRef.current);
       setGameState('ranking');
@@ -204,7 +301,6 @@ export default function HostGamePage() {
         const finalRanking = await fetchCurrentRanking();
         setFullRanking(finalRanking);
 
-        // Enviar ranking final a todos
         broadcast({ state: 'ranking', ranking: finalRanking });
       }
     }
@@ -224,7 +320,6 @@ export default function HostGamePage() {
         {quiz?.title} <span className="text-[#D89E00]">({code})</span>
       </header>
       
-      {/* Timer del host */}
       {(gameState === 'question' || gameState === 'reveal') && (
         <div className="mb-4 bg-white rounded-full px-6 py-2 shadow-lg flex items-center gap-3">
           {gameState === 'question' ? (

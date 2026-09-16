@@ -40,36 +40,48 @@ export default function JoinGamePage() {
   const [wasCorrect, setWasCorrect] = useState(false);
 
   // Listener de broadcast del host
-  useEffect(() => {
-    if (step === 'join-form') return;
+   // Listener de broadcast del host
+    useEffect(() => {
+    console.log('🔌 [Jugador] Configurando listener de broadcast. Step actual:', step);
+    
+    if (step === 'join-form') {
+      console.log('⏸️ [Jugador] Step es join-form, no configurando listener');
+      return;
+    }
 
     const broadcastChannel = supabase.channel(`game:${code}`);
+    console.log('📡 [Jugador] Canal creado:', `game:${code}`);
 
     broadcastChannel
       .on('broadcast', { event: 'game_update' }, (payload) => {
+        console.log('📡 [Jugador] ¡BROADCAST RECIBIDO!', payload.payload);
+        
         const { state, question, correctAnswerId, ranking } = payload.payload;
 
         if (state === 'question' && question) {
+          console.log('❓ [Jugador] Estado: question');
           setStep('question');
           setCurrentQuestion(question);
           setSelectedAnswerId(null);
           setLastPointsEarned(0);
           setWasCorrect(false);
         } else if (state === 'reveal') {
-          // 🎯 Usar los puntos que YA guardamos localmente (precisión absoluta)
-          // No necesitamos recalcular, ya los tenemos exactos
+          console.log('✨ [Jugador] Estado: reveal');
+          console.log('🔍 [Jugador] lastPointsEarned:', lastPointsEarned);
+          console.log('🔍 [Jugador] wasCorrect:', wasCorrect);
+          console.log('🔍 [Jugador] Ranking:', ranking);
           
-          // Actualizar ranking y calcular posición del jugador
-          if (ranking) {
+          if (ranking && ranking.length > 0) {
             setFullRanking(ranking);
             const myIndex = ranking.findIndex((p: RankedPlayer) => p.id === playerId);
+            console.log('🔍 [Jugador] Mi índice en ranking:', myIndex);
+            
             if (myIndex !== -1) {
               setCurrentRankPosition(myIndex + 1);
               setCurrentTotalScore(ranking[myIndex].points);
             }
           }
           
-          // Marcar la respuesta correcta en la pregunta (para consistencia)
           setCurrentQuestion((prev: any) => {
             if (!prev) return prev;
             return {
@@ -81,16 +93,20 @@ export default function JoinGamePage() {
             };
           });
           
-          // Cambiar a pantalla de reveal (puntos animados)
+          console.log('🎬 [Jugador] Cambiando a step: reveal');
           setStep('reveal');
         } else if (state === 'ranking') {
+          console.log('🏆 [Jugador] Estado: ranking');
           setStep('ranking');
           if (ranking) setFullRanking(ranking);
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log('📡 [Jugador] Estado de suscripción:', status);
+      });
 
     return () => {
+      console.log('🔌 [Jugador] Limpiando listener');
       supabase.removeChannel(broadcastChannel);
     };
   }, [step, code, playerId]);
